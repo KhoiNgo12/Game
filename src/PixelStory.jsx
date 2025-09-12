@@ -57,6 +57,45 @@ export default function PixelStory() {
   const SAVE_HISTORY_MAX = 30; // how many *lite* steps to persist
   const CYCLE_LEN = 8; // your day+night length (from timeOf)
 
+  // ---------- FX timers (TOP-LEVEL HOOKS) ----------
+  const hitTimersRef = useRef([]);
+
+  // 1) Clear any previous flash when the scene (node) changes
+  useEffect(() => {
+    hitTimersRef.current.forEach(clearTimeout);
+    hitTimersRef.current = [];
+    if (state.fx?.hitVisible) {
+      setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: false } }));
+    }
+  }, [state.node]);
+  
+  // 2) Start a flash when the damage trigger increments
+  useEffect(() => {
+    const trigger = state.fx?.hitTrigger ?? 0;
+    if (!trigger) return;
+  
+    const BURSTS = 3;
+    const ON_MS = 250;
+    const GAP_MS = 1000;
+  
+    for (let i = 0; i < BURSTS; i++) {
+      const tOn = setTimeout(() => {
+        setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: true } }));
+      }, i * GAP_MS);
+  
+      const tOff = setTimeout(() => {
+        setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: false } }));
+      }, i * GAP_MS + ON_MS);
+  
+      hitTimersRef.current.push(tOn, tOff);
+    }
+  
+    return () => {
+      hitTimersRef.current.forEach(clearTimeout);
+      hitTimersRef.current = [];
+    };
+  }, [state.fx?.hitTrigger]);
+
   // --- Actions ---
   function restart(hard = false) {
     if (hard) {
@@ -64,11 +103,10 @@ export default function PixelStory() {
         localStorage.removeItem(SAVE_KEY);
       } catch {}
     }
-    setState(
-      (s) =>
-        hard
-          ? { ...initialState, seed: makeSeed() } // brand-new run
-          : { ...initialState, seed: s.seed } // replay same seed
+    setState((s) =>
+      hard
+        ? { ...initialState, seed: makeSeed() } // brand-new run
+        : { ...initialState, seed: s.seed } // replay same seed
     );
   }
 
@@ -113,56 +151,9 @@ export default function PixelStory() {
         };
       }
 
-      // controls the repeating flash and cleanup on scene change
-      const hitTimersRef = useRef([]);
-
-      /** Start a 3-burst flash whenever hitTrigger bumps.
-       *  Each burst: show ~250ms, hide; 1s between bursts.
-       */
-      useEffect(() => {
-        // clear any previous timers
-        hitTimersRef.current.forEach(clearTimeout);
-        hitTimersRef.current = [];
-
-        const trigger = state.fx?.hitTrigger ?? 0;
-        if (!trigger) return;
-
-        const BURSTS = 3;
-        const ON_MS = 250; // how long the overlay is visible
-        const GAP_MS = 1000; // delay between bursts
-
-        for (let i = 0; i < BURSTS; i++) {
-          const tOn = setTimeout(() => {
-            setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: true } }));
-          }, i * GAP_MS);
-
-          const tOff = setTimeout(() => {
-            setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: false } }));
-          }, i * GAP_MS + ON_MS);
-
-          hitTimersRef.current.push(tOn, tOff);
-        }
-
-        // cleanup on unmount
-        return () => {
-          hitTimersRef.current.forEach(clearTimeout);
-          hitTimersRef.current = [];
-        };
-        // only re-run when the trigger number changes
-      }, [state.fx?.hitTrigger, setState]);
-
-      /** If the scene (node) changes, kill any ongoing flashes immediately. */
-      useEffect(() => {
-        hitTimersRef.current.forEach(clearTimeout);
-        hitTimersRef.current = [];
-        if (state.fx?.hitVisible) {
-          setState((s) => ({ ...s, fx: { ...s.fx, hitVisible: false } }));
-        }
-        // re-run when the node changes
-      }, [state.node, setState]);
-
-      // Random minor coin drip if node marks rng
-      if (node?.rng) {
+      // Random minor coin drip if current node marks rng
+      const currentNode = story[s.node];
+      if (currentNode?.rng) {
         const r = rng(`${next.seed}:${next.tick}`); // different draw each step
         if (r() < 0.35) next.coins += 1;
       }
@@ -254,12 +245,17 @@ export default function PixelStory() {
     return hidden ? `(+${hidden} earlier) ${tail}` : tail;
   }
 
-  // Strip heavy fields (snapshots) before saving to localStorage
+  // Strip heavy fields before saving to localStorage
   function serializeForSave(state) {
     const liteHistory = state.history
       .slice(-SAVE_HISTORY_MAX)
       .map(({ node, choiceText, time }) => ({ node, choiceText, time })); // no snapshot
-    return { ...state, history: liteHistory };
+    return {
+      ...state,
+      history: liteHistory,
+      // reset visual effects on save
+      fx: { hitTrigger: 0, hitVisible: false, omen: 0 },
+    };
   }
 
   const night = state.time === "night";
@@ -272,9 +268,7 @@ export default function PixelStory() {
           <h1 className="text-2xl font-bold tracking-widest pixel">
             8-BIT QUEST
           </h1>
-          <p className="text-xs text-green-400/80 mt-1">
-            Every choice matters.
-          </p>
+          <p className="text-xs text-green-400/80 mt-1">Every choice matters.</p>
 
           <div className="mt-3 grid grid-cols-4 gap-2 text-center">
             <Stat label="HP" value={state.hp} icon="❤" bad={state.hp <= 2} />
@@ -336,9 +330,7 @@ export default function PixelStory() {
               key={`omen-${state.fx.omen}`}
               className="absolute top-4 right-4 z-30 pointer-events-none"
             >
-              <div className="fx-omen pixel">
-                “The Obelisk marks your path.”
-              </div>
+              <div className="fx-omen pixel">“The Obelisk marks your path.”</div>
             </div>
           )}
           {/* starfield at night */}
@@ -402,48 +394,36 @@ export default function PixelStory() {
         .crt { box-shadow: inset 0 0 0 2px rgba(16,185,129,0.2); image-rendering: pixelated; }
         .btn { transition: transform 0.05s ease; }
         .btn:active { transform: translateY(1px); }
+
         /* --- FX styles --- */
         .fx-hit {
-          +  background:
-+    radial-gradient(circle at 50% 50%, rgba(255,0,0,0.35), rgba(255,0,0,0) 55%),
-+    rgba(127,29,29,0.35);
-+  animation: hitFlash 250ms ease-out;
- }
- @keyframes hitFlash {
-   0% { opacity: 0 }
--  15% { opacity: 1 }
--  100% { opacity: 0 }
-+  10% { opacity: 1 }
-+  100% { opacity: 0 }
- }+  background:
-+    radial-gradient(circle at 50% 50%, rgba(255,0,0,0.35), rgba(255,0,0,0) 55%),
-+    rgba(127,29,29,0.35);
-+  animation: hitFlash 250ms ease-out;
- }
- @keyframes hitFlash {
-   0% { opacity: 0 }
--  15% { opacity: 1 }
--  100% { opacity: 0 }
-+  10% { opacity: 1 }
-+  100% { opacity: 0 }
- }
-    
-     .fx-omen {
-       border: 1px solid rgba(16,185,129,.45);
-       background: rgba(0,0,0,.8);
-       padding: .45rem .6rem;
-       border-radius: .5rem;
-       color: #fca5a5;
-       text-shadow: 0 0 6px rgba(252,165,165,.6);
-       box-shadow: inset 0 0 0 2px rgba(124,58,237,.15);
-       animation: omenPulse 1200ms ease-in-out forwards;
-     }
-     @keyframes omenPulse {
-       0%   { transform: translateY(-6px); opacity: 0 }
-       15%  { transform: translateY(0);    opacity: 1 }
-       85%  { opacity: 1 }
-       100% { opacity: 0 }
-     }
+          background:
+            radial-gradient(circle at 50% 50%, rgba(255,0,0,0.35), rgba(255,0,0,0) 55%),
+            rgba(127,29,29,0.35);
+          animation: hitFlash 250ms ease-out;
+        }
+        @keyframes hitFlash {
+          0% { opacity: 0 }
+          10% { opacity: 1 }
+          100% { opacity: 0 }
+        }
+
+        .fx-omen {
+          border: 1px solid rgba(16,185,129,.45);
+          background: rgba(0,0,0,.8);
+          padding: .45rem .6rem;
+          border-radius: .5rem;
+          color: #fca5a5;
+          text-shadow: 0 0 6px rgba(252,165,165,.6);
+          box-shadow: inset 0 0 0 2px rgba(124,58,237,.15);
+          animation: omenPulse 1200ms ease-in-out forwards;
+        }
+        @keyframes omenPulse {
+          0%   { transform: translateY(-6px); opacity: 0 }
+          15%  { transform: translateY(0);    opacity: 1 }
+          85%  { opacity: 1 }
+          100% { opacity: 0 }
+        }
       `}</style>
     </div>
   );
@@ -781,7 +761,8 @@ function buildStory() {
       emoji: "◇",
       npc: "you",
       rng: true,
-      text: "You wake in a mossy ruin with a faint glow in your palm. East, a town flickers; west, a cave yawns.",
+      text:
+        "You wake in a mossy ruin with a faint glow in your palm. East, a town flickers; west, a cave yawns.",
       choices: [
         { text: "Head to the town", to: "town_gate", set: { karma: 1 } },
         { text: "Enter the cave", to: "cave_entrance", set: { hp: -1 } },
@@ -793,7 +774,8 @@ function buildStory() {
       title: "Ancient Ruin",
       emoji: "⌘",
       npc: "you",
-      text: "Broken tablets under ivy. You find a dusty TORCH and a coin tucked in a crack.",
+      text:
+        "Broken tablets under ivy. You find a dusty TORCH and a coin tucked in a crack.",
       choices: [
         {
           text: "Take TORCH and coin",
@@ -823,7 +805,8 @@ function buildStory() {
       title: "Town Gate",
       emoji: "☗",
       npc: "guard",
-      text: "A guard eyes you. 'Entry fee is 1 coin.' The market smells like fresh bread.",
+      text:
+        "A guard eyes you. 'Entry fee is 1 coin.' The market smells like fresh bread.",
       choices: [
         {
           text: "Pay 1 coin and enter",
@@ -840,7 +823,8 @@ function buildStory() {
       title: "Caught!",
       emoji: "!",
       npc: "guard",
-      text: "The guard grabs you. You lose face and a little blood. He tosses you out.",
+      text:
+        "The guard grabs you. You lose face and a little blood. He tosses you out.",
       choices: [
         { text: "Return sheepishly", to: "town_gate" },
         { text: "Go west instead", to: "cave_entrance" },
@@ -893,7 +877,8 @@ function buildStory() {
       title: "Town Square",
       emoji: "▣",
       npc: "you",
-      text: "Buskers play a tune. Anvils ring nearby; lanterns glow at night.",
+      text:
+        "Buskers play a tune. Anvils ring nearby; lanterns glow at night.",
       choices: [
         { text: "Visit the Blacksmith", to: "blacksmith" },
         { text: "Visit the Inn", to: "inn" },
@@ -949,7 +934,8 @@ function buildStory() {
       title: "Ancient Shrine",
       emoji: "⛬",
       npc: "spirit",
-      text: "Wind hushes between stone pillars. Offerings glint. At dawn, the temple sings.",
+      text:
+        "Wind hushes between stone pillars. Offerings glint. At dawn, the temple sings.",
       choices: [
         {
           text: "Offer 1 coin",
@@ -980,7 +966,8 @@ function buildStory() {
       title: "Forest Edge",
       emoji: "🌲",
       npc: "ranger",
-      text: "Pines crowd the path. Day birds chatter; at night, something else does.",
+      text:
+        "Pines crowd the path. Day birds chatter; at night, something else does.",
       choices: [
         {
           text: "Forage herbs",
@@ -1020,7 +1007,8 @@ function buildStory() {
       emoji: "☼",
       npc: "ranger",
       rng: true,
-      text: "Spider-silk glints. An owl watches. Glow-worms thread the air at night.",
+      text:
+        "Spider-silk glints. An owl watches. Glow-worms thread the air at night.",
       choices: [
         {
           text: "Follow the owl (karma≥2, day)",
@@ -1076,7 +1064,8 @@ function buildStory() {
       title: "Cave Mouth",
       emoji: "▣",
       npc: "you",
-      text: "A chill drifts out. In the dark, something clicks like chitin. A locked iron door sits deeper in.",
+      text:
+        "A chill drifts out. In the dark, something clicks like chitin. A locked iron door sits deeper in.",
       choices: [
         {
           text: "Light TORCH and go in",
@@ -1093,7 +1082,8 @@ function buildStory() {
       emoji: "🕸",
       npc: "spider",
       rng: true,
-      text: "Glittering webs. A skittering shadow circles. The iron door glows with runes.",
+      text:
+        "Glittering webs. A skittering shadow circles. The iron door glows with runes.",
       choices: [
         {
           text: "Fight the spider",
@@ -1116,7 +1106,8 @@ function buildStory() {
       title: "Spider Fight",
       emoji: "⚔",
       npc: "spider",
-      text: "You slash the silk. The spider recoils. A glittering pouch drops.",
+      text:
+        "You slash the silk. The spider recoils. A glittering pouch drops.",
       choices: [
         {
           text: "Grab pouch (+2c)",
@@ -1166,7 +1157,8 @@ function buildStory() {
       title: "Festival Preparations",
       emoji: "✺",
       npc: "guard",
-      text: "Banners rise. A town sergeant barks orders. 'We need hands — and honest ones.'",
+      text:
+        "Banners rise. A town sergeant barks orders. 'We need hands — and honest ones.'",
       choices: [
         {
           text: "Carry lanterns (+1 karma)",
@@ -1216,7 +1208,8 @@ function buildStory() {
       title: "Watchtower",
       emoji: "☗",
       npc: "guard",
-      text: "The sergeant nods at your WRIT. 'Quick look, then off you go.' A chest sits under a faded banner.",
+      text:
+        "The sergeant nods at your WRIT. 'Quick look, then off you go.' A chest sits under a faded banner.",
       choices: [
         {
           text: "Climb and scout the valley (learn routes)",
@@ -1236,7 +1229,8 @@ function buildStory() {
       title: "Tower Chest",
       emoji: "☼",
       npc: "guard",
-      text: "Inside lies a radiant sun-etched tablet, warm to the touch.",
+      text:
+        "Inside lies a radiant sun-etched tablet, warm to the touch.",
       choices: [
         {
           text: "Take SUN GLYPH",
@@ -1253,7 +1247,8 @@ function buildStory() {
       title: "Stone Circle",
       emoji: "◴",
       npc: "owl",
-      text: "Weathered monoliths ring a mossy hollow. The owl watches. At night, the stones hum.",
+      text:
+        "Weathered monoliths ring a mossy hollow. The owl watches. At night, the stones hum.",
       choices: [
         {
           text: "Study the runes",
@@ -1280,7 +1275,8 @@ function buildStory() {
       title: "Sun Obelisk",
       emoji: "☀",
       npc: "golem",
-      text: "A sandstone pillar gleams. Carved eyes blink slowly in the daylight.",
+      text:
+        "A sandstone pillar gleams. Carved eyes blink slowly in the daylight.",
       choices: [
         {
           text: "Offer FEATHER at dawn (day, +1 karma)",
@@ -1302,7 +1298,8 @@ function buildStory() {
       title: "Dawn’s Acknowledgment",
       emoji: "✧",
       npc: "owl",
-      text: "Light pools around the feather, then sinks into the stone. You feel steadier.",
+      text:
+        "Light pools around the feather, then sinks into the stone. You feel steadier.",
       choices: [
         {
           text: "Return to the circle",
@@ -1316,7 +1313,8 @@ function buildStory() {
       title: "Moon Well",
       emoji: "☾",
       npc: "witch",
-      text: "A round well reflects a hole-punch moon. Silver fish ripple the surface.",
+      text:
+        "A round well reflects a hole-punch moon. Silver fish ripple the surface.",
       choices: [
         {
           text: "Dive with MOON RING (safe)",
@@ -1348,7 +1346,8 @@ function buildStory() {
       title: "Under the Well",
       emoji: "❂",
       npc: "witch",
-      text: "Cold as a bell tone. Your fingers brush a smooth tablet in a chiseled niche.",
+      text:
+        "Cold as a bell tone. Your fingers brush a smooth tablet in a chiseled niche.",
       choices: [
         {
           text: "Take MOON GLYPH",
@@ -1362,7 +1361,8 @@ function buildStory() {
       title: "Forging the Sigil",
       emoji: "◎",
       npc: "owl",
-      text: "Sunstone and moonstone kiss. Lines cross until a single circling mark remains.",
+      text:
+        "Sunstone and moonstone kiss. Lines cross until a single circling mark remains.",
       choices: [
         {
           text: "Bind into ECLIPSE SIGIL",
@@ -1379,7 +1379,8 @@ function buildStory() {
       title: "Alley Ambush",
       emoji: "⚔",
       npc: "vendor",
-      text: "The vendor hisses: 'Keep your head down. Cutpurses stalk the lanternlines.'",
+      text:
+        "The vendor hisses: 'Keep your head down. Cutpurses stalk the lanternlines.'",
       choices: [
         {
           text: "Pay them off (2c)",
@@ -1404,7 +1405,8 @@ function buildStory() {
       title: "Eclipse Gate",
       emoji: "◐",
       npc: "golem",
-      text: "With the SIGIL, the air tears like silk. A stone arch spirals with both sun-gold and moon-silver.",
+      text:
+        "With the SIGIL, the air tears like silk. A stone arch spirals with both sun-gold and moon-silver.",
       choices: [
         {
           text: "Balance the powers (karma≥2)",
@@ -1425,7 +1427,7 @@ function buildStory() {
       ],
     },
 
-    // Endings old + new
+    // Endings
     bad_end: {
       type: "ending",
       title: "Broken Fate",
@@ -1439,7 +1441,8 @@ function buildStory() {
       title: "Dawnkeeper",
       emoji: "✷",
       npc: "you",
-      text: "You fuse with the shard without losing yourself. At sunrise, the town cheers — you become its quiet guardian.",
+      text:
+        "You fuse with the shard without losing yourself. At sunrise, the town cheers — you become its quiet guardian.",
       choices: [],
     },
     power_end: {
@@ -1447,7 +1450,8 @@ function buildStory() {
       title: "Moon-Taker",
       emoji: "☽",
       npc: "you",
-      text: "Power floods you. Mercy felt optional anyway. The world will remember your silver glare.",
+      text:
+        "Power floods you. Mercy felt optional anyway. The world will remember your silver glare.",
       choices: [],
     },
     moon_cursed_end: {
@@ -1455,7 +1459,8 @@ function buildStory() {
       title: "Moon-Cursed",
       emoji: "☄",
       npc: "witch",
-      text: "Night accepts you too eagerly. In the mirror, your eyes are not quite yours.",
+      text:
+        "Night accepts you too eagerly. In the mirror, your eyes are not quite yours.",
       choices: [],
     },
     harmony_end: {
@@ -1463,7 +1468,8 @@ function buildStory() {
       title: "Harmony at Dawn",
       emoji: "☀",
       npc: "owl",
-      text: "Feather and vow, heart and light — the temple chimes. You keep the balance between day and night.",
+      text:
+        "Feather and vow, heart and light — the temple chimes. You keep the balance between day and night.",
       choices: [],
     },
 
@@ -1472,7 +1478,8 @@ function buildStory() {
       title: "Eclipse Keeper",
       emoji: "✶",
       npc: "you",
-      text: "You clasp day and night until they hum as one. Seasons align; harvests steady; owls roost above lanternlight.",
+      text:
+        "You clasp day and night until they hum as one. Seasons align; harvests steady; owls roost above lanternlight.",
       choices: [],
     },
 
@@ -1481,7 +1488,8 @@ function buildStory() {
       title: "Shadow Sovereign",
       emoji: "◓",
       npc: "you",
-      text: "Silver floods your veins. The moon keeps your counsel. Wolves quiet when you pass.",
+      text:
+        "Silver floods your veins. The moon keeps your counsel. Wolves quiet when you pass.",
       choices: [],
     },
 
@@ -1490,7 +1498,8 @@ function buildStory() {
       title: "Warden of Dawn",
       emoji: "☼",
       npc: "you",
-      text: "You spend the SIGIL’s last warmth on the town. The gate seals. Bells ring at sunrise; your name becomes a toast.",
+      text:
+        "You spend the SIGIL’s last warmth on the town. The gate seals. Bells ring at sunrise; your name becomes a toast.",
       choices: [],
     },
   };
