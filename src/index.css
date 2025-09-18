@@ -4,3 +4,20 @@
 
 /* optional */
 body { background:#000; color:#d1fae5; }
+
+/* Pixel Game – self-hosted */
+@font-face {
+    font-family: "Pixel Game";
+    src: url("/font/PixelGame-R9AZe.otf") format("opentype");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+  
+  @font-face {
+    font-family: "Pixel Game Extrude";
+    src: url("/font/PixelGameExtrude-BLqwn.otf") format("opentype");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+  }
