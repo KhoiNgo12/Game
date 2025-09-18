@@ -227,7 +227,7 @@ export default function PixelStory() {
     for (const [name, src] of Object.entries(SOUND_FILES)) {
       const el = new Audio(src);
       el.preload = "auto";
-      el.volume = SOUND_VOL[name] ?? 0.7;
+      el.volume = clamp01(SOUND_VOL[name] ?? 0.7);
       if (
         name === "bg" ||
         name === "night" ||
@@ -338,12 +338,21 @@ export default function PixelStory() {
       a.combat.pause();
       a.combat.currentTime = 0;
 
-      // Resume bg if sound is on
-      if (soundOn && a.bg && getVolumeFor("bg") > 0) {
-        a.bg.play().catch(() => {});
-      }
-    }
-  }, [state.node]); // runs every scene change
+      // Resume the right ambience for the current phase
+         if (!soundOn) return;
+         if (state.time === "night") {
+           if (a.night && getVolumeFor("night") > 0) {
+             a.night.volume = getVolumeFor("night");
+             a.night.play().catch(() => {});
+           }
+         } else {
+           if (a.bg && getVolumeFor("bg") > 0) {
+             a.bg.volume = getVolumeFor("bg");
+             a.bg.play().catch(() => {});
+           }
+         }
+        } 
+      }, [state.node, state.time, soundOn]);
 
   // Play queued SFX (set by takeChoice)
   useEffect(() => {
@@ -2192,14 +2201,14 @@ const SOUND_VOL = {
   thunder: 0.5,
 
   // sfx
-  fail: 2.0,
+  fail: 1.0,
   collect: 0.2,
   damage: 0.9,
   click: 0.35,
 
   // result jingles
   victory: 0.95,
-  defeated: 0.9,
+  defeated: 1.5,
 
   // npc / creatures
   wolf: 0.7,
